@@ -12,7 +12,7 @@ libzmq_inc_public = include_directories('include')
 libzmq_deps_private = [thread_dep]
 libzmq_deps_public = []
 
-libzmq_flags_private = ['-DZMQ_CUSTOM_PLATFORM_HPP', '-D_DEFAULT_SOURCE', '-D_REENTRANT', '-D_THREAD_SAFE']
+libzmq_flags_private = ['-DZMQ_CUSTOM_PLATFORM_HPP', '-D_REENTRANT', '-D_THREAD_SAFE']
 libzmq_flags_public = []
 
 libzmq_src = files(
@@ -166,24 +166,27 @@ if websockets
 endif
 conf_data.set('ZMQ_HAVE_WS', websockets)
 
-# ZMQ_USE_GNUTLS and ZMQ_HAVE_WSS
-gnutls_dep = dependency('gnutls', required: get_option('tls'))
-if websockets and gnutls_dep.found()
-  libzmq_src += libzmq_src_wss
-  libzmq_deps_private += gnutls_dep
-  conf_data.set('ZMQ_USE_GNUTLS', true)
-  conf_data.set('ZMQ_HAVE_WSS', true)
-endif
-
-# ZMQ_USE_NSS and ZMQ_USE_BUILTIN_SHA1
-if not gnutls_dep.found()
-  nss_dep = dependency('nss', required: get_option('nss'))
-  if nss_dep.found()
-    libzmq_deps_private += nss_dep
-    conf_data.set('ZMQ_USE_NSS', true)
-  elif websockets
-    libzmq_src += files('external/sha1/sha1.c')
-    conf_data.set('ZMQ_USE_BUILTIN_SHA1', true)
+# ZMQ_USE_GNUTLS, ZMQ_HAVE_WSS, ZMQ_USE_NSS, ZMQ_USE_BUILTIN_SHA1
+if websockets
+  # Websockets require a SHA1 implementation
+  # First via GnuTLS, which also gives secure websockets
+  gnutls_dep = dependency('gnutls', required: get_option('tls'))
+  if gnutls_dep.found()
+    libzmq_src += libzmq_src_wss
+    libzmq_deps_private += gnutls_dep
+    conf_data.set('ZMQ_USE_GNUTLS', true)
+    conf_data.set('ZMQ_HAVE_WSS', true)
+  else
+    # Then try Network Security Service library
+    nss_dep = dependency('nss', required: get_option('nss'))
+    if nss_dep.found()
+      libzmq_deps_private += nss_dep
+      conf_data.set('ZMQ_USE_NSS', true)
+    else
+      # Otherwise use builtin SHA1 implementation
+      libzmq_src += files('external/sha1/sha1.c')
+      conf_data.set('ZMQ_USE_BUILTIN_SHA1', true)
+    endif
   endif
 endif
 
@@ -359,8 +362,23 @@ if build_machine.system() == 'windows'
   libzmq_deps_private += cc.find_library('iphlpapi')
 endif
 
-# FIXME: BSD etc
-libzmq_flags_private += '-D_GNU_SOURCE'
+# Enable POSIX extensions
+posix_extension_flags = ['-D_DEFAULT_SOURCE']
+os_name = build_machine.system()
+if os_name == 'linux' or os_name == 'gnu'
+  posix_extension_flags += '-D_GNU_SOURCE'
+elif os_name == 'freebsd'
+  posix_extension_flags += '-D__BSD_VISIBLE'
+elif os_name == 'netbsd'
+  posix_extension_flags += '-D_NETBSD_SOURCE'
+elif os_name == 'openbsd'
+  posix_extension_flags += '-D_OPENBSD_SOURCE'
+elif os_name == 'sunos'
+  posix_extension_flags += '-D_PTHREADS'
+elif os_name == 'darwin'
+  posix_extension_flags += '-D_DARWIN_C_SOURCE'
+endif
+libzmq_flags_private += posix_extension_flags
 
 # Checking whether noexcept is supported
 zmq_check_noexcept = cc.compiles('''
@@ -380,7 +398,7 @@ int main(int argc, char *argv []) {
     pthread_setname_np ("foo");
     return 0;
 }
-''', args: ['-D_GNU_SOURCE', '-pthread'], name: 'have_pthread_setname_1')
+''', args: posix_extension_flags + ['-pthread'], name: 'have_pthread_setname_1')
 conf_data.set('ZMQ_HAVE_PTHREAD_SETNAME_1', zmq_check_pthread_setname_1)
 zmq_check_pthread_setname_2  = cc.links('''
 #include <pthread.h>
@@ -388,7 +406,7 @@ int main(int argc, char *argv []) {
     pthread_setname_np (pthread_self(), "foo");
     return 0;
 }
-''', args: ['-D_GNU_SOURCE', '-pthread'], name: 'have_pthread_setname_2')
+''', args: posix_extension_flags + ['-pthread'], name: 'have_pthread_setname_2')
 conf_data.set('ZMQ_HAVE_PTHREAD_SETNAME_2', zmq_check_pthread_setname_2)
 zmq_check_pthread_setname_3  = cc.links('''
 #include <pthread.h>
@@ -396,7 +414,7 @@ int main(int argc, char *argv []) {
     pthread_setname_np (pthread_self(), "foo", (void *)0);
     return 0;
 }
-''', args: ['-D_GNU_SOURCE', '-pthread'], name: 'have_pthread_setname_3')
+''', args: posix_extension_flags + ['-pthread'], name: 'have_pthread_setname_3')
 conf_data.set('ZMQ_HAVE_PTHREAD_SETNAME_3', zmq_check_pthread_setname_3)
 zmq_check_pthread_set_name  = cc.links('''
 #include <pthread.h>
@@ -404,7 +422,7 @@ int main(int argc, char *argv []) {
     pthread_set_name_np (pthread_self(), "foo");
     return 0;
 }
-''', args: ['-D_GNU_SOURCE', '-pthread'], name: 'have_pthread_set_name')
+''', args: posix_extension_flags + ['-pthread'], name: 'have_pthread_set_name')
 conf_data.set('ZMQ_HAVE_PTHREAD_SET_NAME', zmq_check_pthread_set_name)
 # Checking pthread_setaffinity signature
 zmq_check_pthread_setaffinity  = cc.links('''
@@ -414,7 +432,7 @@ int main(int argc, char *argv []) {
     pthread_setaffinity_np (pthread_self(), sizeof(cpu_set_t), &test);
     return 0;
 }
-''', args: ['-D_GNU_SOURCE', '-pthread'], name: 'have_pthread_setaffinity')
+''', args: posix_extension_flags + ['-pthread'], name: 'have_pthread_setaffinity')
 conf_data.set('ZMQ_HAVE_PTHREAD_SET_AFFINITY', zmq_check_pthread_setaffinity)
 # Checking whether SOCK_CLOEXEC is supported
 conf_data.set('ZMQ_HAVE_SOCK_CLOEXEC', cc.has_header_symbol('sys/socket.h', 'SOCK_CLOEXEC'))
@@ -465,7 +483,7 @@ int main (int argc, char *argv []) {
     int rc = getrandom(buf, 4, 0);
     return rc == -1 ? 1 : 0;
 }
-''', name: 'have getrandom')
+''', name: 'have_getrandom')
 conf_data.set('ZMQ_HAVE_GETRANDOM', zmq_check_getrandom)
 
 # ZMQ_HAVE_OPENPGM
